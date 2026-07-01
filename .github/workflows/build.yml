@@ -60,8 +60,9 @@ jobs:
       - name: Package IPA
         run: |
           cd "${{ github.workspace }}/build/Release-iphoneos"
+          APP=$(ls -d *.app | head -1)
           mkdir -p Payload
-          cp -R JiJin.app Payload/
+          cp -R "$APP" Payload/
           zip -r "${{ github.workspace }}/JiJin.ipa" Payload
 
       - name: Upload IPA
