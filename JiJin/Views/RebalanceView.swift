@@ -19,15 +19,8 @@ struct RebalanceView: View {
     var body: some View {
         NavigationView {
             List {
-                // 数据来源说明
-                Section {
-                    HStack {
-                        Image(systemName: "info.circle.fill").foregroundColor(.blue)
-                        Text("持仓数据已自动从首页读取，无需手动输入")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    if totalValue == 0 {
+                if totalValue == 0 {
+                    Section {
                         Text("请先在首页设置各基金持仓，ETF填写股数，场外基金同步市值")
                             .font(.caption)
                             .foregroundColor(.orange)
@@ -88,7 +81,8 @@ struct RebalanceView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("再平衡")
+            .navigationTitle("再平衡（持仓数据自动读取）")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
