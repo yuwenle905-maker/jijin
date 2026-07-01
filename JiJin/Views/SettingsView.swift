@@ -55,11 +55,29 @@ struct SettingsView: View {
 struct FundSettingsRow: View {
     let fund: Fund
 
+    private var assetType: String {
+        switch fund.code {
+        case "513500": return "国际权益"
+        case "008114": return "稳健权益"
+        case "022459": return "成长权益"
+        case "110017": return "固收+"
+        case "000216": return "硬资产"
+        default:       return ""
+        }
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Circle().fill(fund.color).frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
-                Text(fund.name).font(.subheadline.bold())
+                HStack(spacing: 6) {
+                    Text(fund.name).font(.subheadline.bold())
+                    if !assetType.isEmpty {
+                        Text("(\(assetType))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 Text("\(fund.scheduleText)  \(fund.actionText)")
                     .font(.caption)
                     .foregroundColor(.secondary)
