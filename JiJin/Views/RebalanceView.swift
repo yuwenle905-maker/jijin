@@ -1,215 +1,137 @@
 import SwiftUI
 
-// MARK: - 再平衡计算器
 struct RebalanceView: View {
     @EnvironmentObject var store: DataStore
-    @State private var values: [UUID: String] = [:]
-    @State private var showResult = false
+    @EnvironmentObject var priceService: PriceService
 
-    private var rebalanceFunds: [Fund] { store.funds.filter { $0.isRebalanceTarget } }
+    // 当前各基金市值（自动从首页数据读取）
+    func currentValue(for fund: Fund) -> Double {
+        if fund.isETF {
+            let price = priceService.prices[fund.code]?.estimatedNAV ?? 0
+            return Double(fund.holdingShares) * price
+        }
+        return fund.holdingValue
+    }
+
+    var totalValue: Double { store.funds.reduce(0) { $0 + currentValue(for: $1) } }
+    var rebalanceFunds: [Fund] { store.funds.filter { $0.isRebalanceTarget } }
 
     var body: some View {
         NavigationView {
-            Form {
+            List {
+                // 数据来源说明
                 Section {
-                    Text("输入各基金当前持仓市值，系统自动计算是否需要再平衡。")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-
-                Section("当前持仓市值") {
-                    ForEach(store.funds) { fund in
-                        HStack {
-                            Circle()
-                                .fill(fund.color)
-                                .frame(width: 8, height: 8)
-                            Text(fund.name)
-                                .font(.subheadline)
-                            Spacer()
-                            TextField("0", text: binding(for: fund.id))
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 100)
-                            Text("元")
-                        }
+                    HStack {
+                        Image(systemName: "info.circle.fill").foregroundColor(.blue)
+                        Text("持仓数据已自动从首页读取，无需手动输入")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    if totalValue == 0 {
+                        Text("请先在首页设置各基金持仓，ETF填写股数，场外基金同步市值")
+                            .font(.caption)
+                            .foregroundColor(.orange)
                     }
                 }
 
                 if totalValue > 0 {
-                    Section("当前占比 vs 目标区间") {
-                        ForEach(rebalanceFunds) { fund in
-                            RebalanceRow(
-                                fund: fund,
-                                currentPct: pct(for: fund),
-                                currentValue: val(for: fund),
-                                totalValue: totalValue
-                            )
+                    // 当前持仓分布
+                    Section("当前持仓分布") {
+                        ForEach(store.funds) { fund in
+                            let val = currentValue(for: fund)
+                            let pct = totalValue > 0 ? val / totalValue * 100 : 0
+                            HStack(spacing: 10) {
+                                Circle().fill(fund.color).frame(width: 8, height: 8)
+                                Text(fund.name).font(.subheadline).lineLimit(1)
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 1) {
+                                    Text(String(format: "¥%.0f", val)).font(.subheadline)
+                                    Text(String(format: "%.1f%%", pct)).font(.caption)
+                                        .foregroundColor(targetStatus(fund: fund, pct: pct / 100))
+                                }
+                            }
                         }
                     }
 
-                    Section("操作建议") {
-                        ForEach(suggestions) { s in
-                            HStack(spacing: 8) {
-                                Image(systemName: s.action == .buy ? "plus.circle.fill" : "minus.circle.fill")
-                                    .foregroundColor(s.action == .buy ? .green : .red)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(s.fund.name).font(.subheadline.bold())
-                                    Text(s.reason).font(.caption).foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Text(s.action == .buy ? "+¥\(Int(s.amount))" : "-¥\(Int(s.amount))")
-                                    .font(.subheadline.bold())
-                                    .foregroundColor(s.action == .buy ? .green : .red)
-                            }
-                        }
+                    // 再平衡建议
+                    Section("再平衡建议") {
+                        let suggestions = buildSuggestions()
                         if suggestions.isEmpty {
                             Label("各资产占比在目标区间内，无需操作", systemImage: "checkmark.seal.fill")
                                 .foregroundColor(.green)
+                        } else {
+                            ForEach(suggestions) { s in
+                                HStack(spacing: 10) {
+                                    Image(systemName: s.isBuy ? "plus.circle.fill" : "minus.circle.fill")
+                                        .foregroundColor(s.isBuy ? .green : .red)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(s.fund.name).font(.subheadline.bold())
+                                        Text(s.reason).font(.caption).foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(s.isBuy ? "+¥\(Int(s.amount))" : "-¥\(Int(s.amount))")
+                                        .font(.subheadline.bold())
+                                        .foregroundColor(s.isBuy ? .green : .red)
+                                }
+                            }
                         }
                     }
 
-                    Section("投资组合概览") {
-                        HStack {
-                            Text("总市值")
-                            Spacer()
-                            Text("¥\(Int(totalValue))")
-                                .bold()
-                        }
-                        HStack {
-                            Text("权益资产")
-                            Spacer()
-                            Text("¥\(Int(equityValue))  (\(pctText(equityValue / totalValue)))")
-                                .foregroundColor(.secondary)
-                        }
-                        HStack {
-                            Text("债券+黄金")
-                            Spacer()
-                            Text("¥\(Int(totalValue - equityValue))  (\(pctText(1 - equityValue / totalValue)))")
-                                .foregroundColor(.secondary)
-                        }
+                    // 组合概览
+                    Section("组合概览") {
+                        infoRow("总持仓", value: String(format: "¥%.2f", totalValue))
+                        let equity = rebalanceFunds.reduce(0.0) { $0 + currentValue(for: $1) }
+                        infoRow("权益资产", value: String(format: "¥%.0f (%.1f%%)", equity, equity/totalValue*100))
+                        infoRow("债券+黄金", value: String(format: "¥%.0f (%.1f%%)",
+                            totalValue - equity, (totalValue - equity)/totalValue*100))
                     }
                 }
             }
-            .navigationTitle("再平衡计算器")
-        }
-    }
-
-    // MARK: 计算属性
-    private var totalValue: Double {
-        store.funds.reduce(0) { $0 + val(for: $1) }
-    }
-
-    private var equityValue: Double {
-        store.funds.filter { $0.isRebalanceTarget }.reduce(0) { $0 + val(for: $1) }
-    }
-
-    private func val(for fund: Fund) -> Double {
-        Double(values[fund.id] ?? "") ?? 0
-    }
-
-    private func pct(for fund: Fund) -> Double {
-        guard totalValue > 0 else { return 0 }
-        return val(for: fund) / totalValue
-    }
-
-    private func pctText(_ v: Double) -> String {
-        String(format: "%.1f%%", v * 100)
-    }
-
-    // MARK: 再平衡建议
-    private var suggestions: [RebalanceSuggestion] {
-        var result: [RebalanceSuggestion] = []
-        for fund in rebalanceFunds {
-            guard let minP = fund.targetMinPct, let maxP = fund.targetMaxPct else { continue }
-            let cur = pct(for: fund)
-            if cur > maxP {
-                let excess = (cur - maxP) * totalValue
-                result.append(RebalanceSuggestion(fund: fund, action: .sell, amount: excess,
-                    reason: "当前 \(pctText(cur))，超过上限 \(pctText(maxP))"))
-            } else if cur < minP {
-                let deficit = (minP - cur) * totalValue
-                result.append(RebalanceSuggestion(fund: fund, action: .buy, amount: deficit,
-                    reason: "当前 \(pctText(cur))，低于下限 \(pctText(minP))"))
-            }
-        }
-        return result
-    }
-
-    private func binding(for id: UUID) -> Binding<String> {
-        Binding(
-            get: { values[id] ?? "" },
-            set: { values[id] = $0 }
-        )
-    }
-}
-
-// MARK: - 再平衡行
-struct RebalanceRow: View {
-    let fund: Fund
-    let currentPct: Double
-    let currentValue: Double
-    let totalValue: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Circle().fill(fund.color).frame(width: 8, height: 8)
-                Text(fund.name).font(.subheadline)
-                Spacer()
-                Text(pctText(currentPct))
-                    .font(.subheadline.bold())
-                    .foregroundColor(statusColor)
-            }
-            if let minP = fund.targetMinPct, let maxP = fund.targetMaxPct {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        // 目标区间背景
-                        Rectangle()
-                            .fill(Color.green.opacity(0.15))
-                            .frame(width: geo.size.width * CGFloat(maxP - minP) / 0.5)
-                            .offset(x: geo.size.width * CGFloat(minP) / 0.5)
-                        // 当前占比指示线
-                        Rectangle()
-                            .fill(statusColor)
-                            .frame(width: 2, height: 12)
-                            .offset(x: geo.size.width * CGFloat(min(currentPct, 0.5)) / 0.5 - 1)
-                    }
-                    .frame(height: 12)
-                    .background(Color(.systemFill))
-                    .cornerRadius(4)
-                }
-                .frame(height: 12)
-                HStack {
-                    Text("目标 \(pctText(minP))–\(pctText(maxP))")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("¥\(Int(currentValue))")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+            .listStyle(.insetGrouped)
+            .navigationTitle("再平衡")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        priceService.fetchAll(codes: store.funds.map(\.code))
+                    } label: { Image(systemName: "arrow.clockwise") }
                 }
             }
         }
-        .padding(.vertical, 4)
     }
 
-    private var statusColor: Color {
+    private func targetStatus(fund: Fund, pct: Double) -> Color {
         guard let minP = fund.targetMinPct, let maxP = fund.targetMaxPct else { return .secondary }
-        if currentPct > maxP { return .red }
-        if currentPct < minP { return .orange }
+        if pct > maxP { return .red }
+        if pct < minP { return .orange }
         return .green
     }
 
-    private func pctText(_ v: Double) -> String { String(format: "%.1f%%", v * 100) }
+    private func buildSuggestions() -> [RebalanceSuggestion] {
+        rebalanceFunds.compactMap { fund in
+            guard let minP = fund.targetMinPct, let maxP = fund.targetMaxPct else { return nil }
+            let cur = totalValue > 0 ? currentValue(for: fund) / totalValue : 0
+            if cur > maxP {
+                return RebalanceSuggestion(fund: fund, isBuy: false, amount: (cur - maxP) * totalValue,
+                    reason: "当前 \(pctStr(cur))，超出上限 \(pctStr(maxP))")
+            } else if cur < minP {
+                return RebalanceSuggestion(fund: fund, isBuy: true, amount: (minP - cur) * totalValue,
+                    reason: "当前 \(pctStr(cur))，低于下限 \(pctStr(minP))")
+            }
+            return nil
+        }
+    }
+
+    private func pctStr(_ v: Double) -> String { String(format: "%.1f%%", v * 100) }
+
+    private func infoRow(_ label: String, value: String) -> some View {
+        HStack { Text(label); Spacer(); Text(value).foregroundColor(.secondary) }
+    }
 }
 
-// MARK: - 建议模型
 struct RebalanceSuggestion: Identifiable {
     let id = UUID()
     let fund: Fund
-    let action: RebalanceAction
+    let isBuy: Bool
     let amount: Double
     let reason: String
 }
-
-enum RebalanceAction { case buy, sell }

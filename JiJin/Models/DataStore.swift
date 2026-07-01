@@ -6,7 +6,7 @@ class DataStore: ObservableObject {
     @Published var funds:   [Fund]             = []
     @Published var records: [InvestmentRecord] = []
 
-    private static let fundsURL   = docURL("funds_v3.json")
+    private static let fundsURL   = docURL("funds_v4.json")
     private static let recordsURL = docURL("records_v1.json")
 
     init() {
@@ -16,7 +16,6 @@ class DataStore: ObservableObject {
         refreshHoldingCosts()
     }
 
-    // MARK: 持久化
     func load() {
         funds   = decode([Fund].self,             from: DataStore.fundsURL)   ?? []
         records = decode([InvestmentRecord].self, from: DataStore.recordsURL) ?? []
@@ -27,126 +26,105 @@ class DataStore: ObservableObject {
         encode(records, to: DataStore.recordsURL)
     }
 
-    // MARK: 记录增删改（改完自动刷新成本）
+    // MARK: 记录 CRUD
     func addRecord(_ r: InvestmentRecord) {
-        records.append(r)
-        save()
-        refreshHoldingCosts()
+        records.append(r); save(); refreshHoldingCosts()
     }
-
     func updateRecord(_ r: InvestmentRecord) {
         if let i = records.firstIndex(where: { $0.id == r.id }) {
-            records[i] = r
-            save()
-            refreshHoldingCosts()
+            records[i] = r; save(); refreshHoldingCosts()
         }
     }
-
     func deleteRecord(id: UUID) {
-        records.removeAll { $0.id == id }
-        save()
-        refreshHoldingCosts()
+        records.removeAll { $0.id == id }; save(); refreshHoldingCosts()
     }
 
-    // MARK: 自动计算累计投入（从成功/部分成交记录求和）
+    // MARK: 自动计算累计投入（成功+部分成交记录之和）
     func refreshHoldingCosts() {
         for i in funds.indices {
-            let cost = records
+            funds[i].holdingCost = records
                 .filter { $0.fundID == funds[i].id && ($0.status == .success || $0.status == .partial) }
                 .reduce(0) { $0 + $1.actualAmount }
-            funds[i].holdingCost = cost
         }
         save()
     }
 
-    // MARK: 基金配置更新
+    // MARK: 基金更新
     func updateFund(_ f: Fund) {
-        if let i = funds.firstIndex(where: { $0.id == f.id }) {
-            funds[i] = f
-            save()
-        }
+        if let i = funds.firstIndex(where: { $0.id == f.id }) { funds[i] = f; save() }
     }
-
-    // MARK: 仅更新持仓市值（用户从券商同步）
     func updateHoldingValue(fundID: UUID, holdingValue: Double) {
         if let i = funds.firstIndex(where: { $0.id == fundID }) {
-            funds[i].holdingValue = holdingValue
-            save()
+            funds[i].holdingValue = holdingValue; save()
         }
     }
-
-    // MARK: ETF持仓更新（手数+均价）
-    func updateETFHolding(fundID: UUID, holdingLots: Int, averageCost: Double) {
+    func updateETFHolding(fundID: UUID, holdingShares: Int, averageCost: Double) {
         if let i = funds.firstIndex(where: { $0.id == fundID }) {
-            funds[i].holdingLots  = holdingLots
-            funds[i].averageCost  = averageCost
+            funds[i].holdingShares = holdingShares
+            funds[i].averageCost   = averageCost
             save()
         }
     }
 
-    // MARK: 今日任务
+    // MARK: 查询
     func fundsForToday() -> [Fund] {
         let day = currentISOWeekday()
         return funds.filter { $0.scheduleDays.contains(day) }
     }
-
     func record(for fund: Fund, on date: Date) -> InvestmentRecord? {
         let cal = Calendar.current
-        return records.first {
-            $0.fundID == fund.id && cal.isDate($0.date, inSameDayAs: date)
-        }
+        return records.first { $0.fundID == fund.id && cal.isDate($0.date, inSameDayAs: date) }
     }
-
-    // MARK: 按日期分组记录
-    var recordsByDate: [(Date, [InvestmentRecord])] {
-        let cal = Calendar.current
-        var dict: [Date: [InvestmentRecord]] = [:]
-        for r in records {
-            let day = cal.startOfDay(for: r.date)
-            dict[day, default: []].append(r)
-        }
-        return dict.sorted { $0.key > $1.key }
+    func records(for fund: Fund) -> [InvestmentRecord] {
+        records.filter { $0.fundID == fund.id }.sorted { $0.date > $1.date }
     }
-
     func fund(for id: UUID) -> Fund? { funds.first { $0.id == id } }
+
+    // 按月分组某基金的记录
+    func recordsByMonth(for fund: Fund) -> [(String, [InvestmentRecord])] {
+        let recs = records(for: fund)
+        let cal  = Calendar.current
+        let fmt  = DateFormatter(); fmt.locale = Locale(identifier: "zh_CN"); fmt.dateFormat = "yyyy年M月"
+        var dict: [String: [InvestmentRecord]] = [:]
+        for r in recs {
+            let key = fmt.string(from: r.date)
+            dict[key, default: []].append(r)
+        }
+        return dict.sorted { a, b in
+            // 按时间倒序
+            let fa = dict[a.key]!.first!.date
+            let fb = dict[b.key]!.first!.date
+            return fa > fb
+        }
+    }
 
     // MARK: 自动生成今日待确认记录
     func autoGenerateTodayRecords() {
         let today = Date()
-        for fund in fundsForToday() {
-            if record(for: fund, on: today) == nil {
-                let r = InvestmentRecord(
-                    fundID: fund.id,
-                    date: today,
-                    plannedAmount: fund.isETF ? 0 : fund.dcaAmount,
-                    actualAmount: fund.isETF ? 0 : fund.dcaAmount,
-                    status: .pending,
-                    isAutoGenerated: true
-                )
-                records.append(r)
-            }
+        for fund in fundsForToday() where record(for: fund, on: today) == nil {
+            records.append(InvestmentRecord(
+                fundID: fund.id, date: today,
+                plannedAmount: fund.isETF ? 0 : fund.dcaAmount,
+                actualAmount:  fund.isETF ? 0 : fund.dcaAmount,
+                status: .pending, isAutoGenerated: true))
         }
         save()
     }
 
-    // MARK: 总资产
-    var totalHoldingValue: Double { funds.reduce(0) { $0 + $1.holdingValue } }
-    var totalHoldingCost:  Double { funds.reduce(0) { $0 + $1.holdingCost  } }
-
-    // MARK: 种子数据
+    // MARK: 种子
     private func seedDefaultFunds() {
         funds = [
-            Fund(name: "标普500ETF联接",          code: "513500", colorHex: "FF2C6FED",
-                 scheduleDays: [1], dcaAmount: 0,   isETF: true,  etfTime: "14:50", etfLots: 100,
+            Fund(name: "标普500ETF联接",        code: "513500", colorHex: "FF2C6FED",
+                 scheduleDays: [1], dcaAmount: 0,   isETF: true,  etfTime: "14:50", etfLots: 1,
                  targetMinPct: 0.20, targetMaxPct: 0.30),
-            Fund(name: "天弘中证红利低波100A",     code: "008114", colorHex: "FFFF6B35",
+            Fund(name: "天弘中证红利低波100A",   code: "008114", colorHex: "FFFF6B35",
                  scheduleDays: [2], dcaAmount: 250, isETF: false,
                  targetMinPct: 0.18, targetMaxPct: 0.28),
-            Fund(name: "易方达增强回报债券A",       code: "110017", colorHex: "FF34C759",
+            Fund(name: "易方达增强回报债券A",     code: "110017", colorHex: "FF34C759",
                  scheduleDays: [2], dcaAmount: 300, isETF: false, isRebalanceTarget: false),
-            Fund(name: "华安黄金ETF联接A",         code: "000216", colorHex: "FFFFCC00",
+            Fund(name: "华安黄金ETF联接A",       code: "000216", colorHex: "FFFFCC00",
                  scheduleDays: [2], dcaAmount: 100, isETF: false, isRebalanceTarget: false),
-            Fund(name: "易方达中证A500ETF联接A",   code: "022459", colorHex: "FFAF52DE",
+            Fund(name: "易方达中证A500ETF联接A", code: "022459", colorHex: "FFAF52DE",
                  scheduleDays: [2], dcaAmount: 200, isETF: false,
                  targetMinPct: 0.13, targetMaxPct: 0.22),
         ]
@@ -168,7 +146,6 @@ class DataStore: ObservableObject {
         try? data.write(to: url, options: .atomicWrite)
     }
     private func currentISOWeekday() -> Int {
-        let w = Calendar.current.component(.weekday, from: Date())
-        return w == 1 ? 7 : w - 1
+        let w = Calendar.current.component(.weekday, from: Date()); return w == 1 ? 7 : w - 1
     }
 }
