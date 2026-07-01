@@ -1,206 +1,250 @@
 import SwiftUI
 
-// MARK: - 今日任务主视图
 struct TodayView: View {
     @EnvironmentObject var store: DataStore
-    @State private var now = Date()
-    @State private var addingRecord: Fund? = nil
-    let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+    @EnvironmentObject var priceService: PriceService
+    @State private var editingRecord: (Fund, InvestmentRecord)? = nil
+    @State private var editingHolding: Fund? = nil
 
     var body: some View {
         NavigationView {
             ScrollView {
-                VStack(spacing: 16) {
-                    dateHeader
-                    if todayFunds.isEmpty {
-                        restCard
-                    } else {
-                        ForEach(todayFunds) { fund in
-                            FundTaskCard(fund: fund, record: store.record(for: fund, on: now)) {
-                                addingRecord = fund
-                            }
-                        }
+                VStack(spacing: 14) {
+                    portfolioSummaryCard
+                    fundCardsSection
+                    if !todayFunds.isEmpty {
+                        todayTaskSection
                     }
-                    weekAheadSection
                 }
                 .padding()
             }
-            .navigationTitle("今日任务")
-            .onReceive(timer) { t in now = t }
-            .sheet(item: $addingRecord) { fund in
-                EditRecordView(fund: fund, existingRecord: store.record(for: fund, on: now))
+            .navigationTitle("定投管家")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        priceService.fetchAll(codes: store.funds.map(\.code))
+                    } label: {
+                        if priceService.isLoading {
+                            ProgressView().scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                }
+            }
+            .onAppear {
+                store.autoGenerateTodayRecords()
+                priceService.fetchAll(codes: store.funds.map(\.code))
+            }
+            .sheet(item: editingRecordBinding) { pair in
+                EditRecordView(fund: pair.fund, existingRecord: pair.record)
+                    .environmentObject(store)
+            }
+            .sheet(item: $editingHolding) { fund in
+                EditHoldingView(fund: fund)
                     .environmentObject(store)
             }
         }
     }
 
-    private var todayFunds: [Fund] { store.fundsForToday() }
-
-    private var dateHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(now, style: .date)
-                    .font(.headline)
-                Text(weekdayName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+    // MARK: - 总持仓摘要卡片
+    private var portfolioSummaryCard: some View {
+        VStack(spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("总持仓").font(.caption).foregroundColor(.secondary)
+                    Text("¥\(Int(store.totalHoldingValue))")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("总盈亏").font(.caption).foregroundColor(.secondary)
+                    let pnl = store.totalHoldingValue - store.totalHoldingCost
+                    let pnlPct = store.totalHoldingCost > 0 ? pnl / store.totalHoldingCost * 100 : 0
+                    HStack(spacing: 4) {
+                        Text(pnl >= 0 ? "+¥\(Int(pnl))" : "-¥\(Int(abs(pnl)))")
+                        Text("(\(String(format: "%+.2f", pnlPct))%)")
+                    }
+                    .font(.subheadline.bold())
+                    .foregroundColor(pnl >= 0 ? .green : .red)
+                }
             }
-            Spacer()
-            // 本周合计定投金额
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("本周计划")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text("¥\(Int(weeklyPlanned))")
-                    .font(.headline)
-                    .foregroundColor(.blue)
+
+            if let updated = priceService.lastUpdated {
+                HStack {
+                    Image(systemName: "wifi")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    Text("行情更新 \(updated, style: .time)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
             }
         }
         .padding()
         .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 2)
+        .cornerRadius(14)
+        .shadow(color: .black.opacity(0.07), radius: 6, x: 0, y: 2)
     }
 
-    private var restCard: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "moon.zzz.fill")
-                .font(.largeTitle)
-                .foregroundColor(.secondary)
-            Text("今天没有定投任务")
-                .foregroundColor(.secondary)
+    // MARK: - 各基金持仓卡片
+    private var fundCardsSection: some View {
+        VStack(spacing: 10) {
+            ForEach(store.funds) { fund in
+                FundHoldingCard(
+                    fund: fund,
+                    priceInfo: priceService.prices[fund.code]
+                )
+                .onTapGesture { editingHolding = fund }
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(32)
-        .background(Color(.secondarySystemBackground))
-        .cornerRadius(12)
     }
 
-    private var weekAheadSection: some View {
+    // MARK: - 今日定投任务
+    private var todayTaskSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("本周安排")
-                .font(.subheadline.bold())
-                .foregroundColor(.secondary)
-            ForEach(1...5, id: \.self) { day in
-                let dayFunds = store.funds.filter { $0.scheduleDays.contains(day) }
-                if !dayFunds.isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(["", "周一", "周二", "周三", "周四", "周五"][day])
-                            .font(.caption.bold())
-                            .frame(width: 32, alignment: .leading)
-                            .foregroundColor(day == currentISOWeekday ? .blue : .secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(dayFunds) { f in
-                                Text("• \(f.name)  \(f.actionText)")
-                                    .font(.caption)
-                                    .foregroundColor(day == currentISOWeekday ? .primary : .secondary)
-                            }
-                        }
-                        Spacer()
-                    }
+            HStack {
+                Text("今日任务")
+                    .font(.subheadline.bold())
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(Date(), style: .date)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            ForEach(todayFunds) { fund in
+                if let record = store.record(for: fund, on: Date()) {
+                    TodayTaskRow(fund: fund, record: record)
+                        .onTapGesture { editingRecord = (fund, record) }
                 }
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground))
-        .cornerRadius(12)
+        .background(Color(.systemBackground))
+        .cornerRadius(14)
+        .shadow(color: .black.opacity(0.07), radius: 6, x: 0, y: 2)
     }
 
-    private var weekdayName: String {
-        ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"][currentISOWeekday]
-    }
+    private var todayFunds: [Fund] { store.fundsForToday() }
 
-    private var currentISOWeekday: Int {
-        let w = Calendar.current.component(.weekday, from: now)
-        return w == 1 ? 7 : w - 1
-    }
-
-    private var weeklyPlanned: Double {
-        store.funds.reduce(0) { $0 + $1.dcaAmount }
+    // binding helpers
+    private var editingRecordBinding: Binding<FundRecordPair?> {
+        Binding(
+            get: { editingRecord.map { FundRecordPair(fund: $0.0, record: $0.1) } },
+            set: { editingRecord = $0.map { ($0.fund, $0.record) } }
+        )
     }
 }
 
-// MARK: - 单个基金任务卡片
-struct FundTaskCard: View {
+// MARK: - 基金持仓卡片
+struct FundHoldingCard: View {
     let fund: Fund
-    let record: InvestmentRecord?
-    let onTap: () -> Void
+    let priceInfo: PriceInfo?
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                // 颜色标识
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(fund.color)
-                    .frame(width: 4)
-                    .frame(height: 60)
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(fund.color)
+                .frame(width: 4, height: 64)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(fund.name)
-                            .font(.subheadline.bold())
-                        Spacer()
-                        if fund.isETF, let time = fund.etfTime {
-                            ETFCountdown(targetTime: time)
-                        }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(fund.name)
+                        .font(.subheadline.bold())
+                        .lineLimit(1)
+                    if let info = priceInfo, info.isHighPosition {
+                        Text("高位")
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.red.opacity(0.15))
+                            .foregroundColor(.red)
+                            .cornerRadius(4)
                     }
-                    Text(fund.code)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text(fund.actionText)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
+                Text(fund.code)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
 
-                Spacer()
-
-                // 完成状态
-                if let r = record {
-                    Image(systemName: r.status.icon)
-                        .foregroundColor(r.status.color)
-                        .font(.title3)
-                } else {
-                    Image(systemName: "chevron.right.circle")
-                        .foregroundColor(.blue)
-                        .font(.title3)
+                // 实时价格行
+                if let info = priceInfo {
+                    HStack(spacing: 6) {
+                        Text(String(format: "%.4f", info.estimatedNAV))
+                            .font(.caption.monospacedDigit())
+                        changeTag(info.changePercent)
+                    }
                 }
             }
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 2)
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 3) {
+                if fund.isETF {
+                    Text("\(fund.holdingLots) 手")
+                        .font(.subheadline.bold())
+                    if let info = priceInfo, fund.averageCost > 0 {
+                        let pnlPct = (info.estimatedNAV - fund.averageCost) / fund.averageCost * 100
+                        Text(String(format: "%+.2f%%", pnlPct))
+                            .font(.caption.bold())
+                            .foregroundColor(pnlPct >= 0 ? .green : .red)
+                    }
+                } else {
+                    Text("¥\(Int(fund.holdingValue))")
+                        .font(.subheadline.bold())
+                    if fund.holdingCost > 0 {
+                        let pnl = (fund.holdingValue - fund.holdingCost) / fund.holdingCost * 100
+                        Text(String(format: "%+.2f%%", pnl))
+                            .font(.caption.bold())
+                            .foregroundColor(pnl >= 0 ? .green : .red)
+                    }
+                }
+                Image(systemName: "pencil")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 1)
+    }
+
+    @ViewBuilder
+    private func changeTag(_ pct: Double) -> some View {
+        Text(String(format: "%+.2f%%", pct))
+            .font(.caption2.monospacedDigit())
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(pct >= 0 ? Color.green.opacity(0.12) : Color.red.opacity(0.12))
+            .foregroundColor(pct >= 0 ? .green : .red)
+            .cornerRadius(4)
     }
 }
 
-// MARK: - ETF倒计时标签（仅周一显示）
-struct ETFCountdown: View {
-    let targetTime: String
-    @State private var remaining: String = ""
-    let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+// MARK: - 今日任务行
+struct TodayTaskRow: View {
+    let fund: Fund
+    let record: InvestmentRecord
 
     var body: some View {
-        Text(remaining.isEmpty ? targetTime : remaining)
-            .font(.caption2.monospacedDigit())
-            .foregroundColor(remaining.isEmpty ? .secondary : .orange)
-            .onAppear { update() }
-            .onReceive(timer) { _ in update() }
-    }
-
-    private func update() {
-        let parts = targetTime.split(separator: ":").map { Int($0) ?? 0 }
-        guard parts.count == 2 else { return }
-        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        comps.hour   = parts[0]
-        comps.minute = parts[1]
-        comps.second = 0
-        guard let target = Calendar.current.date(from: comps) else { return }
-        let diff = Int(target.timeIntervalSince(Date()))
-        if diff > 0 && diff < 3600 {
-            remaining = "还有 \(diff / 60) 分钟"
-        } else {
-            remaining = ""
+        HStack(spacing: 10) {
+            Circle().fill(fund.color).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(fund.name).font(.subheadline)
+                Text(fund.actionText).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            HStack(spacing: 4) {
+                Image(systemName: record.status.icon)
+                Text(record.status.rawValue)
+                    .font(.caption)
+            }
+            .foregroundColor(record.status.color)
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
+        .padding(.vertical, 6)
     }
 }

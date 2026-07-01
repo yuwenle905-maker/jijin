@@ -13,6 +13,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 拉取完整历史用于生成版本号
+
+      - name: Set version
+        id: version
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d)
+          RUN_NUM=${{ github.run_number }}
+          VERSION="v${DATE}-r${RUN_NUM}-${SHORT_SHA}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Build version: $VERSION"
 
       - name: Select Xcode 16
         run: |
@@ -22,6 +35,13 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Patch version into project.yml
+        run: |
+          sed -i '' "s/CFBundleVersion: \"1\"/CFBundleVersion: \"${{ github.run_number }}\"/" project.yml
+          sed -i '' "s/CFBundleShortVersionString: \"1.0.0\"/CFBundleShortVersionString: \"$VERSION\"/" project.yml
+          echo "=== patched version ==="
+          grep -E "CFBundleVersion|CFBundleShortVersionString" project.yml
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
@@ -53,7 +73,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ env.VERSION }}
           path: build.log
           retention-days: 7
 
@@ -63,12 +83,20 @@ jobs:
           APP=$(ls -d *.app | head -1)
           mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -r "${{ github.workspace }}/JiJin.ipa" Payload
+          zip -r "${{ github.workspace }}/JiJin-${{ env.VERSION }}.ipa" Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: JiJin-TrollStore
-          path: JiJin.ipa
+          name: 定投管家-${{ env.VERSION }}
+          path: JiJin-${{ env.VERSION }}.ipa
           retention-days: 30
           if-no-files-found: error
+
+      - name: Create git tag
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ env.VERSION }}"
+          git push origin "${{ env.VERSION }}" || true

@@ -1,6 +1,5 @@
 import SwiftUI
 
-// MARK: - 新增/编辑投资记录
 struct EditRecordView: View {
     @EnvironmentObject var store: DataStore
     @Environment(\.dismiss) var dismiss
@@ -8,12 +7,12 @@ struct EditRecordView: View {
     let fund: Fund
     var existingRecord: InvestmentRecord?
 
-    @State private var date          = Date()
-    @State private var actualAmount  = ""
-    @State private var units         = ""
-    @State private var price         = ""
-    @State private var status        = RecordStatus.success
-    @State private var note          = ""
+    @State private var date         = Date()
+    @State private var actualAmount = ""
+    @State private var units        = ""
+    @State private var price        = ""
+    @State private var status       = RecordStatus.success
+    @State private var note         = ""
 
     var isEditing: Bool { existingRecord != nil }
 
@@ -21,11 +20,9 @@ struct EditRecordView: View {
         NavigationView {
             Form {
                 Section {
-                    HStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(fund.color)
-                            .frame(width: 4, height: 40)
-                        VStack(alignment: .leading) {
+                    HStack(spacing: 10) {
+                        RoundedRectangle(cornerRadius: 4).fill(fund.color).frame(width: 4, height: 44)
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(fund.name).font(.headline)
                             Text(fund.actionText).font(.caption).foregroundColor(.secondary)
                         }
@@ -42,49 +39,48 @@ struct EditRecordView: View {
                             Label(s.rawValue, systemImage: s.icon).tag(s)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                 }
 
-                Section("金额详情") {
-                    HStack {
-                        Text("实际金额")
-                        Spacer()
-                        TextField(fund.isETF ? "0" : "\(Int(fund.dcaAmount))", text: $actualAmount)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                        Text("元")
-                    }
-                    if fund.isETF {
+                if status != .skipped && status != .failed {
+                    Section("金额详情") {
                         HStack {
-                            Text("成交价")
+                            Text("实际金额")
                             Spacer()
-                            TextField("元/股", text: $price)
+                            TextField(fund.isETF ? "0" : "\(Int(fund.dcaAmount))", text: $actualAmount)
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
+                                .frame(width: 100)
                             Text("元")
                         }
-                        HStack {
-                            Text("成交手数")
-                            Spacer()
-                            TextField("手", text: $units)
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                            Text("手")
-                        }
-                    } else {
-                        HStack {
-                            Text("确认净值")
-                            Spacer()
-                            TextField("可选", text: $price)
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        HStack {
-                            Text("确认份数")
-                            Spacer()
-                            TextField("可选", text: $units)
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
+                        if fund.isETF {
+                            HStack {
+                                Text("成交价")
+                                Spacer()
+                                TextField("元/股", text: $price)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 100)
+                                Text("元")
+                            }
+                            HStack {
+                                Text("成交手数")
+                                Spacer()
+                                TextField("手", text: $units)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 100)
+                                Text("手")
+                            }
+                        } else {
+                            HStack {
+                                Text("确认净值")
+                                Spacer()
+                                TextField("可选", text: $price)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 100)
+                            }
                         }
                     }
                 }
@@ -113,36 +109,28 @@ struct EditRecordView: View {
                     }
                 }
             }
-            .navigationTitle(isEditing ? "编辑记录" : "记录执行")
+            .navigationTitle(isEditing ? "编辑记录" : "确认执行")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }
-                        .disabled(!canSave)
                 }
             }
             .onAppear { prefill() }
         }
     }
 
-    private var canSave: Bool {
-        status == .failed || status == .skipped || !actualAmount.isEmpty
-    }
-
     private func prefill() {
         guard let r = existingRecord else {
-            // 新增时预填计划金额
             if !fund.isETF { actualAmount = "\(Int(fund.dcaAmount))" }
             return
         }
         date         = r.date
         actualAmount = r.actualAmount > 0 ? "\(Int(r.actualAmount))" : ""
-        units        = r.units.map { "\($0)" } ?? ""
-        price        = r.price.map { "\($0)" } ?? ""
-        status       = r.status
+        units        = r.units.map  { String(format: "%.2f", $0) } ?? ""
+        price        = r.price.map  { String(format: "%.4f", $0) } ?? ""
+        status       = r.status == .pending ? .success : r.status
         note         = r.note ?? ""
     }
 
@@ -158,12 +146,13 @@ struct EditRecordView: View {
             actualAmount: amt,
             status: status
         )
-        record.date          = date
-        record.actualAmount  = amt
-        record.units         = u
-        record.price         = p
-        record.status        = status
-        record.note          = note.isEmpty ? nil : note
+        record.date         = date
+        record.actualAmount = amt
+        record.units        = u
+        record.price        = p
+        record.status       = status
+        record.note         = note.isEmpty ? nil : note
+        record.isAutoGenerated = false
 
         if isEditing {
             store.updateRecord(record)
