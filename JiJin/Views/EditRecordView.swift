@@ -90,8 +90,16 @@ struct EditRecordView: View {
                 }
 
                 Section("备注") {
-                    TextField("余额不足 / 延迟执行 / 其他", text: $note, axis: .vertical)
-                        .lineLimit(3)
+                    ZStack(alignment: .topLeading) {
+                        if note.isEmpty {
+                            Text("余额不足 / 延迟执行 / 其他")
+                                .foregroundColor(Color(.placeholderText))
+                                .padding(.top, 8)
+                                .padding(.leading, 4)
+                        }
+                        TextEditor(text: $note)
+                            .frame(minHeight: 60)
+                    }
                 }
 
                 if isEditing {
