@@ -1,0 +1,63 @@
+name: JiJin
+options:
+  bundleIdPrefix: com.yourname
+  deploymentTarget:
+    iOS: "15.0"
+  generateEmptyDirectories: true
+  createIntermediateGroups: true
+
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.yourname.JiJin
+    PRODUCT_NAME: 定投管家
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_BITCODE: NO
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    AD_HOC_CODE_SIGNING_ALLOWED: YES
+    ARCHS: arm64
+    VALID_ARCHS: arm64
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: arm64
+    SUPPORTS_MACCATALYST: NO
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+
+targets:
+  JiJin:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: JiJin
+        excludes:
+          - Info.plist
+    info:
+      path: JiJin/Info.plist
+      properties:
+        CFBundleName: 定投管家
+        CFBundleDisplayName: 定投管家
+        CFBundleIdentifier: com.yourname.JiJin
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0.0"
+        UILaunchScreen: {}
+    settings:
+      base:
+        INFOPLIST_FILE: JiJin/Info.plist
+        SDKROOT: iphoneos
+
+schemes:
+  JiJin:
+    build:
+      targets:
+        JiJin: all
+    run:
+      config: Debug
+    archive:
+      config: Release
