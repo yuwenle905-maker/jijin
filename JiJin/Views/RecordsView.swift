@@ -67,12 +67,6 @@ struct RecordsView: View {
     }
 }
 
-// Identifiable wrapper for sheet
-struct FundRecordPair: Identifiable {
-    let id = UUID()
-    let fund: Fund
-    let record: InvestmentRecord
-}
 
 // MARK: - 单条记录行
 struct RecordRow: View {

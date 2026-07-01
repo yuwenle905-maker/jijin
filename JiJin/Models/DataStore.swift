@@ -6,13 +6,14 @@ class DataStore: ObservableObject {
     @Published var funds:   [Fund]             = []
     @Published var records: [InvestmentRecord] = []
 
-    private static let fundsURL   = docURL("funds_v2.json")
+    private static let fundsURL   = docURL("funds_v3.json")
     private static let recordsURL = docURL("records_v1.json")
 
     init() {
         load()
         if funds.isEmpty { seedDefaultFunds() }
         autoGenerateTodayRecords()
+        refreshHoldingCosts()
     }
 
     // MARK: 持久化
@@ -26,25 +27,39 @@ class DataStore: ObservableObject {
         encode(records, to: DataStore.recordsURL)
     }
 
-    // MARK: 记录增删改
+    // MARK: 记录增删改（改完自动刷新成本）
     func addRecord(_ r: InvestmentRecord) {
         records.append(r)
         save()
+        refreshHoldingCosts()
     }
 
     func updateRecord(_ r: InvestmentRecord) {
         if let i = records.firstIndex(where: { $0.id == r.id }) {
             records[i] = r
             save()
+            refreshHoldingCosts()
         }
     }
 
     func deleteRecord(id: UUID) {
         records.removeAll { $0.id == id }
         save()
+        refreshHoldingCosts()
     }
 
-    // MARK: 基金配置 + 持仓更新
+    // MARK: 自动计算累计投入（从成功/部分成交记录求和）
+    func refreshHoldingCosts() {
+        for i in funds.indices {
+            let cost = records
+                .filter { $0.fundID == funds[i].id && ($0.status == .success || $0.status == .partial) }
+                .reduce(0) { $0 + $1.actualAmount }
+            funds[i].holdingCost = cost
+        }
+        save()
+    }
+
+    // MARK: 基金配置更新
     func updateFund(_ f: Fund) {
         if let i = funds.firstIndex(where: { $0.id == f.id }) {
             funds[i] = f
@@ -52,13 +67,29 @@ class DataStore: ObservableObject {
         }
     }
 
-    // MARK: 今日应操作的基金
+    // MARK: 仅更新持仓市值（用户从券商同步）
+    func updateHoldingValue(fundID: UUID, holdingValue: Double) {
+        if let i = funds.firstIndex(where: { $0.id == fundID }) {
+            funds[i].holdingValue = holdingValue
+            save()
+        }
+    }
+
+    // MARK: ETF持仓更新（手数+均价）
+    func updateETFHolding(fundID: UUID, holdingLots: Int, averageCost: Double) {
+        if let i = funds.firstIndex(where: { $0.id == fundID }) {
+            funds[i].holdingLots  = holdingLots
+            funds[i].averageCost  = averageCost
+            save()
+        }
+    }
+
+    // MARK: 今日任务
     func fundsForToday() -> [Fund] {
         let day = currentISOWeekday()
         return funds.filter { $0.scheduleDays.contains(day) }
     }
 
-    // MARK: 某天某基金的记录
     func record(for fund: Fund, on date: Date) -> InvestmentRecord? {
         let cal = Calendar.current
         return records.first {
@@ -66,7 +97,7 @@ class DataStore: ObservableObject {
         }
     }
 
-    // MARK: 按日期分组（降序）
+    // MARK: 按日期分组记录
     var recordsByDate: [(Date, [InvestmentRecord])] {
         let cal = Calendar.current
         var dict: [Date: [InvestmentRecord]] = [:]
@@ -98,83 +129,32 @@ class DataStore: ObservableObject {
         save()
     }
 
-    // MARK: 持仓快捷更新（从 holdingValue 编辑）
-    func updateHolding(fundID: UUID, holdingValue: Double, holdingCost: Double,
-                       holdingLots: Int, averageCost: Double) {
-        if let i = funds.firstIndex(where: { $0.id == fundID }) {
-            funds[i].holdingValue = holdingValue
-            funds[i].holdingCost  = holdingCost
-            funds[i].holdingLots  = holdingLots
-            funds[i].averageCost  = averageCost
-            save()
-        }
-    }
-
-    // MARK: 总持仓市值
+    // MARK: 总资产
     var totalHoldingValue: Double { funds.reduce(0) { $0 + $1.holdingValue } }
     var totalHoldingCost:  Double { funds.reduce(0) { $0 + $1.holdingCost  } }
 
     // MARK: 种子数据
     private func seedDefaultFunds() {
         funds = [
-            Fund(
-                name: "标普500ETF联接",
-                code: "513500",
-                colorHex: "FF2C6FED",
-                scheduleDays: [1],
-                dcaAmount: 0,
-                isETF: true,
-                etfTime: "14:50",
-                etfLots: 100,
-                targetMinPct: 0.20,
-                targetMaxPct: 0.30
-            ),
-            Fund(
-                name: "天弘中证红利低波100A",
-                code: "008114",
-                colorHex: "FFFF6B35",
-                scheduleDays: [2],
-                dcaAmount: 250,
-                isETF: false,
-                targetMinPct: 0.18,
-                targetMaxPct: 0.28
-            ),
-            Fund(
-                name: "易方达增强回报债券A",
-                code: "110017",
-                colorHex: "FF34C759",
-                scheduleDays: [2],
-                dcaAmount: 300,
-                isETF: false,
-                isRebalanceTarget: false
-            ),
-            Fund(
-                name: "华安黄金ETF联接A",
-                code: "000216",
-                colorHex: "FFFFCC00",
-                scheduleDays: [2],
-                dcaAmount: 100,
-                isETF: false,
-                isRebalanceTarget: false
-            ),
-            Fund(
-                name: "易方达中证A500ETF联接A",
-                code: "022459",
-                colorHex: "FFAF52DE",
-                scheduleDays: [2],          // 改为周二
-                dcaAmount: 200,
-                isETF: false,
-                targetMinPct: 0.13,
-                targetMaxPct: 0.22
-            ),
+            Fund(name: "标普500ETF联接",          code: "513500", colorHex: "FF2C6FED",
+                 scheduleDays: [1], dcaAmount: 0,   isETF: true,  etfTime: "14:50", etfLots: 100,
+                 targetMinPct: 0.20, targetMaxPct: 0.30),
+            Fund(name: "天弘中证红利低波100A",     code: "008114", colorHex: "FFFF6B35",
+                 scheduleDays: [2], dcaAmount: 250, isETF: false,
+                 targetMinPct: 0.18, targetMaxPct: 0.28),
+            Fund(name: "易方达增强回报债券A",       code: "110017", colorHex: "FF34C759",
+                 scheduleDays: [2], dcaAmount: 300, isETF: false, isRebalanceTarget: false),
+            Fund(name: "华安黄金ETF联接A",         code: "000216", colorHex: "FFFFCC00",
+                 scheduleDays: [2], dcaAmount: 100, isETF: false, isRebalanceTarget: false),
+            Fund(name: "易方达中证A500ETF联接A",   code: "022459", colorHex: "FFAF52DE",
+                 scheduleDays: [2], dcaAmount: 200, isETF: false,
+                 targetMinPct: 0.13, targetMaxPct: 0.22),
         ]
         save()
     }
 
-    // MARK: Codable 辅助
     private static func docURL(_ name: String) -> URL {
-        FileManager.default
-            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(name)
     }
     private func decode<T: Decodable>(_ t: T.Type, from url: URL) -> T? {
