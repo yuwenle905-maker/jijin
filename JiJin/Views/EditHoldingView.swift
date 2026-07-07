@@ -8,6 +8,7 @@ struct EditHoldingView: View {
     @State private var holdingValue  = ""
     @State private var holdingShares = ""
     @State private var averageCost   = ""
+    @State private var manualCostStr = ""   // 场外基金：用户手填的累计投入
 
     var body: some View {
         NavigationView {
@@ -68,19 +69,26 @@ struct EditHoldingView: View {
                                 .frame(width: 130)
                             Text("元").foregroundColor(.secondary)
                         }
+                        HStack {
+                            Text("累计投入")
+                            Spacer()
+                            TextField("实际投入总金额", text: $manualCostStr)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 130)
+                            Text("元").foregroundColor(.secondary)
+                        }
                     } header: {
                         Text("场外基金持仓")
                     } footer: {
-                        Text("东方财富 → 理财资产 → 对应基金的「金额」数字")
+                        Text("市值：东方财富 → 理财资产 → 对应基金的「金额」\n累计投入：东方财富 → 持仓 → 对应基金的「累计投入」")
                             .font(.caption)
                     }
 
-                    Section("自动计算") {
-                        infoRow("累计投入", value: String(format: "¥%.2f", fund.holdingCost),
-                                note: "从定投记录自动汇总")
-                        if let v = Double(holdingValue), fund.holdingCost > 0, v > 0 {
-                            let pnl = v - fund.holdingCost
-                            let pct = pnl / fund.holdingCost * 100
+                    if let v = Double(holdingValue), let c = Double(manualCostStr), c > 0, v > 0 {
+                        let pnl = v - c
+                        let pct = pnl / c * 100
+                        Section("预览") {
                             infoRow("持仓收益", value: String(format: "%+.2f 元", pnl),
                                     color: pnl >= 0 ? .green : .red)
                             infoRow("收益率", value: String(format: "%+.2f%%", pct),
@@ -115,6 +123,9 @@ struct EditHoldingView: View {
         holdingValue  = fund.holdingValue  > 0 ? String(format: "%.2f", fund.holdingValue) : ""
         holdingShares = fund.holdingShares > 0 ? "\(fund.holdingShares)" : ""
         averageCost   = fund.averageCost   > 0 ? String(format: "%.4f", fund.averageCost)  : ""
+        // 优先用手动值，否则用自动汇总值（如有）作为参考预填
+        let costRef = fund.manualCost ?? (fund.holdingCost > 0 ? fund.holdingCost : nil)
+        manualCostStr = costRef.map { String(format: "%.2f", $0) } ?? ""
     }
 
     private func save() {
@@ -124,8 +135,10 @@ struct EditHoldingView: View {
                 holdingShares: Int(holdingShares) ?? fund.holdingShares,
                 averageCost:   Double(averageCost) ?? fund.averageCost)
         } else {
-            store.updateHoldingValue(fundID: fund.id,
-                holdingValue: Double(holdingValue) ?? fund.holdingValue)
+            store.updateHoldingValue(
+                fundID: fund.id,
+                holdingValue: Double(holdingValue) ?? fund.holdingValue,
+                manualCost: Double(manualCostStr))
         }
         dismiss()
     }

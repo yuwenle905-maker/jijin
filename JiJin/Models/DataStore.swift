@@ -39,12 +39,16 @@ class DataStore: ObservableObject {
         records.removeAll { $0.id == id }; save(); refreshHoldingCosts()
     }
 
-    // MARK: 自动计算累计投入（成功+部分成交记录之和）
+    // MARK: 自动计算累计投入（成功+部分成交记录之和；manualCost 设置后优先使用）
     func refreshHoldingCosts() {
         for i in funds.indices {
-            funds[i].holdingCost = records
-                .filter { $0.fundID == funds[i].id && ($0.status == .success || $0.status == .partial) }
-                .reduce(0) { $0 + $1.actualAmount }
+            if let manual = funds[i].manualCost {
+                funds[i].holdingCost = manual
+            } else {
+                funds[i].holdingCost = records
+                    .filter { $0.fundID == funds[i].id && ($0.status == .success || $0.status == .partial) }
+                    .reduce(0) { $0 + $1.actualAmount }
+            }
         }
         save()
     }
@@ -53,9 +57,12 @@ class DataStore: ObservableObject {
     func updateFund(_ f: Fund) {
         if let i = funds.firstIndex(where: { $0.id == f.id }) { funds[i] = f; save() }
     }
-    func updateHoldingValue(fundID: UUID, holdingValue: Double) {
+    func updateHoldingValue(fundID: UUID, holdingValue: Double, manualCost: Double? = nil) {
         if let i = funds.firstIndex(where: { $0.id == fundID }) {
-            funds[i].holdingValue = holdingValue; save()
+            funds[i].holdingValue = holdingValue
+            funds[i].manualCost   = manualCost
+            funds[i].holdingCost  = manualCost ?? funds[i].holdingCost
+            save()
         }
     }
     func updateETFHolding(fundID: UUID, holdingShares: Int, averageCost: Double) {

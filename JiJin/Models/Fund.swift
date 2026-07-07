@@ -16,7 +16,8 @@ struct Fund: Identifiable, Codable, Equatable {
     var isRebalanceTarget: Bool = true
 
     // 持仓（自动/手动）
-    var holdingCost: Double  = 0   // 累计投入，自动从记录计算
+    var holdingCost: Double  = 0   // 累计投入，自动从记录计算（或由 manualCost 覆盖）
+    var manualCost: Double?  = nil // 用户手动设置的累计投入（优先于自动计算）
     var holdingValue: Double = 0   // 场外基金当前市值（用户从券商同步）
     var holdingShares: Int   = 0   // 场内ETF持股数（股，非手）
     var averageCost: Double  = 0   // 场内ETF成本价（元/股）
